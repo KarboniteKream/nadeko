@@ -8,7 +8,8 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
-// #include <sys/types.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -62,6 +63,15 @@ int main(int argc, char **argv)
 
 	while(true)
 	{
+		int status;
+		pid_t pid = 0;
+
+		while((pid = waitpid(-1, &status, WNOHANG)) > 0)
+		{
+			printf(ANSI_MAGENTA "[INFO]" ANSI_RESET " Process %d ended.\n", pid);
+			fflush(stdout);
+		}
+
 		client_sock = accept(server_sock, &client_addr, &client_size);
 
 		// TODO: Check for error.
