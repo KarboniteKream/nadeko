@@ -180,13 +180,14 @@ int main(int argc, char **argv)
 					modified_since[strchr(modified_since, '\r') - modified_since] = '\0';
 				}
 
+				// FIXME: Compare time_t.
 				if(modified_since != NULL && strcmp(modified_since, modification_date) == 0)
 				{
 					response_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: close\r\n", date, modification_date);
 				}
 				else
 				{
-					response_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
+					response_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
 					memcpy(response + response_size, content, file_size);
 					response_size += file_size;
 					response[response_size] = '\0';
