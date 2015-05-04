@@ -11,6 +11,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <signal.h>
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -22,10 +24,30 @@
 #define ANSI_MAGENTA "\x1b[35m"
 #define ANSI_YELLOW  "\x1b[33m"
 
+void handle_signals(int signo)
+{
+	int status;
+
+	if(signo == SIGCHLD)
+	{
+		pid_t pid = waitpid(-1, &status, WNOHANG);
+		printf("KILLED %d\n", pid);
+		signal(SIGCHLD, handle_signals);
+	}
+}
+
 int main(int argc, char **argv)
 {
+	// struct sigaction act;
+	// act.sa_handler = handle_signals;
+	// sigemptyset(&act.sa_mask);
+	// act.sa_flags = 0;
+	// sigaction(SIGCHLD, &act, NULL);
+
+	signal(SIGCHLD, handle_signals);
+
 	// TODO: Use setvbuf() to force flush.
-	printf(ANSI_CYAN "[INFO]" ANSI_RESET " Nadeko v0.0.1\n");
+	printf(ANSI_CYAN "[INFO]" ANSI_RESET " Nadeko v0.0.1, pid=%d\n", getpid());
 	fflush(stdout);
 
 	int server_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -63,28 +85,28 @@ int main(int argc, char **argv)
 
 	while(true)
 	{
-		int status;
-		pid_t pid = 0;
-
-		while((pid = waitpid(-1, &status, WNOHANG)) > 0)
+		if((client_sock = accept(server_sock, &client_addr, &client_size)) == -1)
 		{
-			printf(ANSI_MAGENTA "[INFO]" ANSI_RESET " Process %d ended.\n", pid);
-			fflush(stdout);
+			continue;
 		}
 
-		client_sock = accept(server_sock, &client_addr, &client_size);
-
 		// TODO: Check for error.
-		if(fork() > 0)
+		printf("FORK\n");
+		pid_t cpid = fork();
+
+		if(cpid > 0)
 		{
+			printf("forked to %d from %d\n", cpid, getpid());
+			fflush(stdout);
 			close(client_sock);
 			continue;
 		}
 
+		// NOTE: If request is 0 bytes, the fork still happens.
 		if((num_bytes = recv(client_sock, &request, sizeof(request) - 1, 0)) > 0)
 		{
 			request[num_bytes] = '\0';
-			printf(ANSI_YELLOW "<<<" ANSI_RESET " Received %d bytes:\n%s\n", num_bytes, request);
+			printf("%d " ANSI_YELLOW "<<<" ANSI_RESET " Received %d bytes:\n%s\n", getpid(), num_bytes, request);
 			fflush(stdout);
 
 			char *request_continue = strchr(request, '\n');
@@ -144,7 +166,7 @@ int main(int argc, char **argv)
 
 			FILE *file = fopen(filename, "rb");
 			struct stat file_stat;
-			size_t response_size = 0;
+			size_t header_size = 0, content_size = 0;
 
 			if(file != NULL)
 			{
@@ -183,26 +205,31 @@ int main(int argc, char **argv)
 				// FIXME: Compare time_t.
 				if(modified_since != NULL && strcmp(modified_since, modification_date) == 0)
 				{
-					response_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: close\r\n", date, modification_date);
+					header_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: close\r\n", date, modification_date);
 				}
 				else
 				{
-					response_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
-					memcpy(response + response_size, content, file_size);
-					response_size += file_size;
-					response[response_size] = '\0';
+					header_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
+					memcpy(response + header_size, content, file_size);
+					content_size = file_size;
+					response[header_size + content_size] = '\0';
 				}
 
 				free(content);
 			}
 			else
 			{
-				response_size = snprintf(response, sizeof(response), "HTTP/1.1 404 Not Found\r\nServer: nadeko/0.0.1\r\nDate: %s\r\n", date);
+				header_size = snprintf(response, sizeof(response), "HTTP/1.1 404 Not Found\r\nServer: nadeko/0.0.1\r\nDate: %s\r\n", date);
 			}
 
-			num_bytes = send(client_sock, &response, response_size, 0);
-			printf(ANSI_BLUE ">>>" ANSI_RESET " Sent %d bytes:\n%s\n", num_bytes, response);
+			num_bytes = send(client_sock, &response, header_size + content_size, 0);
+			response[header_size] = '\0';
+			printf("%d " ANSI_BLUE ">>>" ANSI_RESET " Sent %d bytes:\n%s\n", getpid(), num_bytes, response);
 			fflush(stdout);
+		}
+		else
+		{
+			printf("EMPTY REQUEST\n");
 		}
 
 		close(client_sock);
@@ -214,6 +241,9 @@ int main(int argc, char **argv)
 		printf(ANSI_RED "[ERR]" ANSI_RESET " Unable to close the socket: %s.\n", strerror(errno));
 		return 1;
 	}
+
+	printf("END %d\n", getpid());
+	fflush(stdout);
 
 	return 0;
 }
