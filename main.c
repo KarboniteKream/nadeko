@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+// #include <sys/types.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -54,6 +56,7 @@ int main(int argc, char **argv)
 	char request[1024];
 	char response[1048576];
 	char date[48];
+	char modification_date[48];
 	char filename[256];
 	char content_type[16];
 
@@ -74,7 +77,8 @@ int main(int argc, char **argv)
 			printf(ANSI_YELLOW "<<<" ANSI_RESET " Received %d bytes:\n%s\n", num_bytes, request);
 			fflush(stdout);
 
-			long pos_end = strchr(request, '\n') - request;
+			char *request_continue = strchr(request, '\n');
+			long pos_end = request_continue - request;
 			request[pos_end - 10] = '\0';
 			request[pos_end] = '\0';
 
@@ -129,6 +133,7 @@ int main(int argc, char **argv)
 			strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S %Z", time_info);
 
 			FILE *file = fopen(filename, "rb");
+			struct stat file_stat;
 			size_t response_size = 0;
 
 			if(file != NULL)
@@ -152,10 +157,30 @@ int main(int argc, char **argv)
 					strncpy(content_type, "image", 16);
 				}
 
-				response_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nContent-Length: %ld\r\n\r\n", date, content_type, file_type, file_size);
-				memcpy(response + response_size, content, file_size);
-				response_size += file_size;
-				response[response_size] = '\0';
+				stat(filename, &file_stat);
+				time_info = gmtime(&file_stat.st_mtime);
+				strftime(modification_date, sizeof(modification_date), "%a, %d %b %Y %H:%M:%S %Z", time_info);
+
+				// TODO: Move.
+				char *modified_since = strstr(request_continue + 1, "If-Modified-Since");
+
+				if(modified_since != NULL)
+				{
+					modified_since += 19;
+					modified_since[strchr(modified_since, '\r') - modified_since] = '\0';
+				}
+
+				if(modified_since != NULL && strcmp(modified_since, modification_date) == 0)
+				{
+					response_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: close\r\n", date, modification_date);
+				}
+				else
+				{
+					response_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
+					memcpy(response + response_size, content, file_size);
+					response_size += file_size;
+					response[response_size] = '\0';
+				}
 
 				free(content);
 			}
