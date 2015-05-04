@@ -30,21 +30,27 @@ void handle_signals(int signo)
 
 	if(signo == SIGCHLD)
 	{
-		pid_t pid = waitpid(-1, &status, WNOHANG);
-		printf("KILLED %d\n", pid);
-		signal(SIGCHLD, handle_signals);
+		pid_t pid;
+
+		while((pid = waitpid(-1, &status, WNOHANG)) > 0)
+		{
+			printf("KILLED %d\n", pid);
+			fflush(stdout);
+		}
+
+		// signal(SIGCHLD, handle_signals);
 	}
 }
 
 int main(int argc, char **argv)
 {
-	// struct sigaction act;
-	// act.sa_handler = handle_signals;
-	// sigemptyset(&act.sa_mask);
-	// act.sa_flags = 0;
-	// sigaction(SIGCHLD, &act, NULL);
+	struct sigaction act;
+	act.sa_handler = handle_signals;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	sigaction(SIGCHLD, &act, NULL);
 
-	signal(SIGCHLD, handle_signals);
+	// signal(SIGCHLD, handle_signals);
 
 	// TODO: Use setvbuf() to force flush.
 	printf(ANSI_CYAN "[INFO]" ANSI_RESET " Nadeko v0.0.1, pid=%d\n", getpid());
