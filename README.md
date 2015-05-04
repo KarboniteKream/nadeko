@@ -1,3 +1,3 @@
 # nadeko
 
-A slutty web server.
+An unsafe web server.

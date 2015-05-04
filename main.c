@@ -89,6 +89,8 @@ int main(int argc, char **argv)
 	char filename[256];
 	char content_type[16];
 
+	bool close_connection = false;
+
 	while(true)
 	{
 		if((client_sock = accept(server_sock, &client_addr, &client_size)) == -1)
@@ -108,11 +110,11 @@ int main(int argc, char **argv)
 			continue;
 		}
 
-		// NOTE: If request is 0 bytes, the fork still happens.
-		if((num_bytes = recv(client_sock, &request, sizeof(request) - 1, 0)) > 0)
+		// TODO: Timeout.
+		while((num_bytes = recv(client_sock, &request, sizeof(request) - 1, 0)) > 0)
 		{
 			request[num_bytes] = '\0';
-			printf("%d " ANSI_YELLOW "<<<" ANSI_RESET " Received %d bytes:\n%s\n", getpid(), num_bytes, request);
+			printf("%d " ANSI_YELLOW "<<<" ANSI_RESET " Received %d bytes:\n" ANSI_YELLOW "--------------------------------" ANSI_RESET "\n%s\n" ANSI_YELLOW "--------------------------------" ANSI_RESET "\n\n", getpid(), num_bytes, request);
 			fflush(stdout);
 
 			char *request_continue = strchr(request, '\n');
@@ -208,14 +210,28 @@ int main(int argc, char **argv)
 					modified_since[strchr(modified_since, '\r') - modified_since] = '\0';
 				}
 
+				char *connection = strstr(request_continue + 1, "Connection");
+
+				if(connection != NULL)
+				{
+					connection += 12;
+					connection[strchr(connection, '\r') - connection] = '\0';
+
+					if(strcmp(connection, "close") == 0)
+					{
+						close_connection = true;
+					}
+				}
+
 				// FIXME: Compare time_t.
 				if(modified_since != NULL && strcmp(modified_since, modification_date) == 0)
 				{
-					header_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: close\r\n", date, modification_date);
+					header_size = snprintf(response, sizeof(response), "HTTP/1.1 304 Not Modified\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nLast-Modified: %s\r\nConnection: keep-alive\r\n\r\n", date, modification_date);
 				}
 				else
 				{
-					header_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: close\r\n\r\n", date, content_type, file_type, file_size, modification_date);
+					// TODO: Handle charset.
+					header_size = snprintf(response, sizeof(response), "HTTP/1.1 200 OK\r\nServer: nadeko/0.0.1\r\nDate: %s\r\nContent-Type: %s/%s; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %ld\r\nLast-Modified: %s\r\nConnection: keep-alive\r\n\r\n", date, content_type, file_type, file_size, modification_date);
 					memcpy(response + header_size, content, file_size);
 					content_size = file_size;
 					response[header_size + content_size] = '\0';
@@ -225,20 +241,24 @@ int main(int argc, char **argv)
 			}
 			else
 			{
-				header_size = snprintf(response, sizeof(response), "HTTP/1.1 404 Not Found\r\nServer: nadeko/0.0.1\r\nDate: %s\r\n", date);
+				header_size = snprintf(response, sizeof(response), "HTTP/1.1 404 Not Found\r\nServer: nadeko/0.0.1\r\nDate: %s\r\n\r\n", date);
 			}
 
 			num_bytes = send(client_sock, &response, header_size + content_size, 0);
 			response[header_size] = '\0';
-			printf("%d " ANSI_BLUE ">>>" ANSI_RESET " Sent %d bytes:\n%s\n", getpid(), num_bytes, response);
+			printf("%d " ANSI_BLUE ">>>" ANSI_RESET " Sent %d bytes:\n" ANSI_BLUE "--------------------------------" ANSI_RESET "\n%s\n" ANSI_BLUE "--------------------------------" ANSI_RESET "\n\n", getpid(), num_bytes, response);
 			fflush(stdout);
-		}
-		else
-		{
-			printf("EMPTY REQUEST\n");
+
+			if(close_connection == true)
+			{
+				break;
+			}
 		}
 
+		printf(ANSI_CYAN "[INFO]" ANSI_RESET " Empty request, closing socket.\n");
+		fflush(stdout);
 		close(client_sock);
+
 		break;
 	}
 
